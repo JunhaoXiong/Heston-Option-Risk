@@ -43,3 +43,14 @@ def test_implied_vol_nan_outside_arbitrage_bounds():
 def test_bad_kind_raises():
     with pytest.raises(ValueError):
         bs_price(100, 100, 1, 0, 0, 0.2, "straddle")
+
+
+def test_kind_as_object_array_is_not_treated_as_all_calls():
+    """Regression: pandas string columns arrive as object arrays."""
+    kind = np.array(["put", "call"], dtype=object)
+    px = bs_price(100, np.array([90.0, 110.0]), 0.5, 0.03, 0.0, 0.2, kind)
+    assert px[0] == pytest.approx(bs_price(100, 90.0, 0.5, 0.03, 0.0, 0.2, "put"))
+    iv = implied_vol(px, 100, np.array([90.0, 110.0]), 0.5, 0.03, 0.0, kind)
+    assert np.allclose(iv, 0.2, atol=1e-9)
+    with pytest.raises(ValueError):
+        bs_price(100, 100, 1, 0, 0, 0.2, np.array(["straddle"], dtype=object))

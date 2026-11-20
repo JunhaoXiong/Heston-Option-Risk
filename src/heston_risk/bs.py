@@ -14,6 +14,8 @@ from scipy.special import ndtr
 
 def _is_call(kind) -> np.ndarray:
     k = np.asarray(kind)
+    if k.dtype == object:  # e.g. a pandas column of strings; astype(bool) would make every entry True
+        k = k.astype(str)
     if k.dtype.kind in "US":
         bad = ~np.isin(k, ["call", "put"])
         if np.any(bad):

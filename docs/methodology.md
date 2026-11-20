@@ -182,6 +182,53 @@ A non-significant bias only means it is below the resolution of that path count.
   little in case I; the stock control variate gives ~2.5x there. Variance reduction does not
   touch discretisation bias, which is the dominant error for Euler.
 
+## Calibration to SPY (Phase 3)
+
+Code: `src/heston_risk/calibration/`. Experiment: `scripts/run_phase3.py` -> `reports/phase3_results.md`.
+Data: `data/spy_2026-11-20/` (Yahoo end-of-day chain, 9,421 quotes, sha256 checked on load).
+
+### Market inputs
+* **Discount rate**: flat r from the 13-week T-bill (^IRX is a bank-discount yield d; P = 1 - d·91/360,
+  r = -ln P / (91/365)). A free regression of C - P on K for (D, F) jointly was tried first and gave
+  D > 1 on several expiries (too few, too noisy near-ATM pairs), so D is fixed and only F is estimated.
+* **Forward per expiry**: F = median over near-ATM strikes of K + (C_mid - P_mid)/D. This absorbs dividends
+  and the after-hours move of SPY (option quotes end ~15 minutes after the equity close).
+* **Time**: ACT/365 from the last quote time to 16:00 New York on the expiry date.
+* Each quote is priced with the Phase 1 pricer using S_eff = F e^{-rT}, q = 0, which reproduces F exactly.
+
+### Quote selection
+Out-of-the-money side only (puts K < F, calls K >= F), 7 days to 2.5 years, two-sided quotes,
+relative spread <= 50%, mid >= $0.05, |ln(K/F)| <= max(0.5 sqrt(T), 0.1), IV invertible. OTM quotes are
+the liquid ones and carry the least early-exercise value.
+
+### American exercise
+SPY options are American. The early-exercise premium of each quote is measured with a CRR tree
+(American minus European on the same tree). Calls: zero. Puts: grows with maturity (median ~0.5 vol
+points for 1-2 years) because r > q puts long-dated forward-OTM puts in the money against spot.
+De-Americanisation: solve the tree volatility that reproduces the American mid, subtract the tree premium
+at that volatility, re-invert the European IV. It is run as a sensitivity; the parameters move little.
+
+### Objective and optimiser
+Minimise sum_i ((C_model_i - C_mid_i)/vega_i)^2. Since dC = vega d(sigma), each term is approximately the
+squared IV error, so this is an IV fit without inverting model prices inside the loop. Trust-region
+least squares inside box bounds, 10 Latin-hypercube starts. Feller is not imposed; a Feller-constrained
+fit (sigma = sqrt(2 kappa theta f), f in (0,1]) is reported for comparison.
+
+### Validation
+* Synthetic recovery test: prices generated with known parameters are calibrated back to them (tests).
+* 80/20 split stratified by expiry; out-of-sample IV RMSE reported next to in-sample.
+* Benchmark: one constant BS volatility.
+* Multi-start agreement as a check on local minima.
+
+### Results (2026-11-20 close, a -3.6% day)
+Unconstrained: v0 = 0.133 (36% vol), kappa = 8.07, theta = 0.0556 (24% vol), sigma = 2.25, rho = -0.77,
+Feller ratio 0.18. IV RMSE 0.96 (train) / 0.85 (test) vol points vs 6.8 / 6.6 for one BS vol;
+median bid-ask spread is 0.31 vol points, so the fit is about 3 spreads wide on average.
+All 10 starts reach the same optimum. The Feller-constrained fit is about 3x worse (2.8 / 2.5) and hits
+rho = -0.999: without a large vol-of-vol the model cannot create the observed skew and curvature.
+The very high kappa and sigma are the usual Heston compromise: one variance factor must produce both a
+steep short-dated skew (needs large sigma) and a flatter long-dated term structure (needs fast reversion).
+
 ## References
 
 * Heston, S. (1993). A closed-form solution for options with stochastic volatility. RFS 6(2).

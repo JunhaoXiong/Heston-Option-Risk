@@ -11,7 +11,7 @@ No number in the reports is typed by hand: every table is produced by a script i
 | Phase | Content | Status |
 |---|---|---|
 | 1 | Analytic Heston pricer (characteristic function, Lewis formula), validation | done |
-| 2 | Monte Carlo with Andersen (2008) QE scheme vs analytic; bias/variance study | planned |
+| 2 | Monte Carlo with Andersen (2008) QE scheme vs analytic; bias/variance study | done |
 | 3 | Calibration to a real SPY implied-volatility surface | planned |
 | 4 | Neural-network surrogate pricer trained on analytic prices; honest speed/error report | planned |
 | 5 | Greeks; delta-gamma vs full-revaluation VaR for an options portfolio | planned |
@@ -27,6 +27,20 @@ Full report: [`reports/phase1_results.md`](reports/phase1_results.md). Method an
 * About 1 ms for 50 strikes at one maturity, roughly 100x faster than adaptive quadrature.
 * Uses the "little Heston trap" characteristic function. With the original 1993 form and a standard
   complex log, the 5-year ATM call in our test case comes out at 36.0 instead of 15.9.
+
+## Phase 2 highlights
+
+Full report: [`reports/phase2_results.md`](reports/phase2_results.md).
+
+* Andersen QE with martingale correction against full-truncation Euler, 5 parameter sets (incl. the three
+  hard Andersen 2008 cases with Feller ratios 0.03 to 0.18), dt from 1 to 1/32 years, 1,000,000 paths per point,
+  truth = Phase 1 analytic price.
+* QE has no statistically significant bias from dt = 1/4 on in the four Feller-violating cases (from 1/8 in the mild case); full-truncation Euler is still
+  significantly biased at dt = 1/32 in four of five cases (e.g. Andersen case I, ATM: +0.235 on a 13.08 price).
+* At dt = 1/8 the worst QE bias is 0.019 vs 1.16 for Euler. Euler's bias shrinks roughly linearly in dt
+  (fitted slopes 0.84 to 1.24), i.e. first order but with a large constant.
+* Variance reduction: antithetic sampling halves variance in the mild case but does little in the hard
+  case; the stock control variate adds a 2.5x reduction there.
 
 ## Why this project exists (rebuild of earlier code)
 
@@ -48,9 +62,11 @@ src/heston_risk/
   heston/params.py      parameter container, Feller ratio
   heston/charfunc.py    characteristic function (little trap; 1993 form kept for the demo)
   heston/pricer.py      Lewis + composite Gauss-Legendre; quad and Gil-Pelaez references
-  mc/euler.py           full-truncation Euler (Phase 1 sanity check only)
+  mc/euler.py           full-truncation Euler (Phase 1 sanity check)
+  mc/simulate.py        Andersen QE + full-truncation Euler, path grid output, MC pricer with s.e. and control variate
 tests/                  pytest suite
 scripts/run_phase1.py   regenerates reports/phase1_results.md and figures
+scripts/run_phase2.py   QE vs Euler bias study (about 4 minutes; --quick for a smoke test)
 docs/methodology.md     formulas, numerical choices, references
 ```
 

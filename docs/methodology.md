@@ -113,6 +113,75 @@ cross-check against the independent formula below.
 * Prices are per unit of underlying, no contract multiplier.
 * No greeks yet (Phase 5).
 
+## Monte Carlo simulation (Phase 2)
+
+Code: `src/heston_risk/mc/simulate.py`. Experiment: `scripts/run_phase2.py` -> `reports/phase2_results.md`.
+
+### Why discretisation is hard for Heston
+
+The variance follows a CIR process. Its exact one-step transition is a scaled non-central
+chi-square distribution, which is expensive to sample (Broadie-Kaya exact simulation also needs
+the conditional integrated variance via a Fourier inversion per step, which is far too slow for
+risk work). A naive Euler step v' = v + kappa(theta - v)D + sigma sqrt(vD) Z can go negative,
+and the fix chosen for the negative values (absorption, reflection, truncation) creates bias,
+worst exactly when the Feller condition fails, which is the typical calibrated case.
+
+### Baseline: full-truncation Euler
+
+Lord, Koekkoek & van Dijk (2010) compare the fixes and find full truncation (use v+ = max(v,0)
+in both drift and diffusion, but keep the untruncated v as the state) to be the least biased Euler
+variant. It is first-order in dt (weakly) at best, and the constant can be large.
+
+### Andersen (2008) quadratic-exponential (QE) scheme
+
+**Variance step.** Instead of discretising the SDE, sample from a simple distribution whose first
+two moments equal the exact conditional CIR moments m and s^2 (formulas in the module docstring).
+Let psi = s^2/m^2:
+* psi small (variance far from 0): v' = a (b + Z)^2, a squared shifted normal. This is the
+  large-degrees-of-freedom shape of the non-central chi-square.
+* psi large (variance near 0): a mixture of an atom at 0 with probability p and an exponential tail.
+  This captures the real probability mass close to zero that the quadratic form cannot produce.
+* The switch at psi_c = 1.5 (Andersen's choice) is valid because the quadratic form needs
+  psi <= 2 and the exponential form needs psi >= 1. Both branches are non-negative by construction,
+  so no truncation is ever needed.
+
+**Price step.** Integrating the SDEs exactly gives
+ln S' = ln S + (r-q)D + (rho/sigma)(v' - v - kappa theta D) + (kappa rho/sigma - 1/2) int v du
++ sqrt(1-rho^2) int sqrt(v) dW. The only approximation is int v du ~ D(gamma1 v + gamma2 v')
+(central rule, gamma1 = gamma2 = 1/2), and the last term is then conditionally normal. Using v'
+from the variance step keeps the price/variance correlation consistent with the sampled variance.
+
+**Martingale correction.** The discretised scheme does not make the forward an exact martingale.
+Because E[exp(A v') | v] is available in closed form for both branches, K0 is replaced path by path
+so that E[S'|S, v] = S e^{(r-q)D} holds exactly. The tests show the drift without the correction
+(about -1% per year-step for Andersen case I at v = 0.2) and none with it. If the closed form does
+not exist (A too large) the plain K0 is used and counted; this never happened in the experiment.
+
+### Estimators
+
+* Independent samples are antithetic-pair averages, so the standard error is not understated.
+* Optional control variate: the discounted terminal stock e^{-rT} S_T has known mean S0 e^{-qT}.
+  The optimal coefficient is estimated from the same sample (a bias of order 1/N, negligible here).
+
+### Bias measurement protocol
+
+Truth is the Phase 1 analytic price (accurate to ~1e-10, far below MC error). For each case,
+scheme and dt in {1, 1/2, ..., 1/32} years, 1,000,000 paths are simulated with a distinct fixed seed;
+bias = MC - analytic is reported with its standard error and flagged significant if |bias| > 2 s.e.
+A non-significant bias only means it is below the resolution of that path count.
+
+### Findings (see `reports/phase2_results.md`)
+
+* QE: no significant bias at any strike from dt = 1/4 onwards in cases B, I, II, III (from 1/8 in the
+  mild case A, where a -0.018 bias at K=80 remains at dt = 1/4), including the three
+  Andersen cases whose variance hits the exponential branch in 71% to 92% of draws.
+* Euler: still significantly biased at dt = 1/32 in four of five cases; the bias is positive for
+  the hard cases (truncation keeps variance artificially high) and decays roughly like dt.
+* The martingale correction was always available (zero fallbacks).
+* Antithetic variates help when the payoff is close to linear in the shocks (mild case, ~2x) but
+  little in case I; the stock control variate gives ~2.5x there. Variance reduction does not
+  touch discretisation bias, which is the dominant error for Euler.
+
 ## References
 
 * Heston, S. (1993). A closed-form solution for options with stochastic volatility. RFS 6(2).
@@ -121,4 +190,5 @@ cross-check against the independent formula below.
 * Kahl, C., Jäckel, P. (2005). Not-so-complex logarithms in the Heston model. Wilmott Magazine.
 * Fang, F., Oosterlee, C. (2008). A novel pricing method for European options based on Fourier-cosine series expansions. SIAM J. Sci. Comput. 31(2).
 * Lord, R., Koekkoek, R., van Dijk, D. (2010). A comparison of biased simulation schemes for stochastic volatility models. Quant. Finance 10(2).
+* Broadie, M., Kaya, O. (2006). Exact simulation of stochastic volatility and other affine jump diffusion processes. Operations Research 54(2).
 * Andersen, L. (2008). Simple and efficient simulation of the Heston stochastic volatility model. J. Comp. Finance 11(3).

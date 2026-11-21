@@ -1,0 +1,12 @@
+{
+ "source": "Yahoo Finance via yfinance",
+ "fetched_utc": "2026-11-21T00:24:19.022665+00:00",
+ "spy_column": "unadjusted Close (price return, matches option underlying)",
+ "vix_column": "^VIX Close",
+ "rows": 5255,
+ "first": "2006-01-03",
+ "last": "2026-11-20",
+ "sha256": {
+  "spy_vix_daily.csv": "3f638c6bc50b4a9da03e95f410b14a01921037cdd54d9dd0b923ff26ece620f3"
+ }
+}

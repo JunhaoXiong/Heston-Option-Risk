@@ -282,6 +282,68 @@ not the limit of this architecture.
 3. `surrogate/train.py`: `train_surrogate` (mini-batch loop, learning-rate schedule, early stopping).
 4. `scripts/run_phase4.py`: section 6 shows how the surrogate replaces the pricer inside calibration.
 
+## Greeks and non-linear VaR (Phase 5)
+
+### The question, in plain terms
+A linear portfolio (shares, ETFs) loses in proportion to the market move, so its VaR scales with the
+move. An option does not: its value is a curved function of the spot and of volatility. Phase 5 asks
+how much accuracy we lose if we replace that curve by a Taylor expansion (Greeks), compared with
+re-pricing every option in every scenario ("full revaluation").
+
+### Greeks used
+With kappa, theta, sigma, rho fixed, the book value V(S, v, t) is expanded around today:
+
+dV ≈ Delta dS + Theta dt + ½ Gamma dS² + Vega_v dv + Vanna dS dv + ½ Volga dv²
+
+* Delta = dV/dS: dollars gained per $1 SPY rise (share-equivalents). Gamma = how fast Delta changes.
+* Vega_v = dV/dv, with v the Heston instantaneous variance (also reported per vol point of sqrt v).
+* Vanna = d²V/dS dv, Volga = d²V/dv². Theta = value change as one day passes, nothing else moving.
+
+All are central finite differences on the analytic pricer (spot bump 0.1%, variance bump 1%). They are
+cheap here because the pricer is accurate to ~1e-10, so bump noise is negligible.
+
+Note on delta: the Heston delta at fixed v is larger than the Black-Scholes delta at the same implied vol
+when the skew is negative, because a spot rise moves a fixed strike into the higher-implied-vol region of
+the smile measured in moneyness. The report prints both for the 1M ATM call.
+
+### Scenarios
+Historical simulation: each past day t gives the pair (SPY log return, VIX ratio) over h days, applied to
+today's state: S' = S e^x, v' = v0 (VIX_{t+h}/VIX_t)². Time to expiry shrinks by h/252. Using VIX makes the
+scenarios move volatility together with spot, which is what happens in a sell-off (spot down, vol up).
+
+### Five methods
+1. Delta (+theta), 2. Delta-gamma, 3. Delta-gamma-vega with vanna and volga, 4. full analytic revaluation
+(the benchmark), 5. full revaluation with the Phase 4 MLP (falling back to the analytic pricer outside its
+training box, counted in the report).
+
+### What came out (see `reports/phase5_results.md` for every number)
+* Long option (book B): delta-only *overstates* the loss, delta-gamma still overstates it. A long option's
+  curvature cushions large falls, and in a sell-off the vol rise (vega) helps a long option.
+* Short option (book C) and the hedged short straddle (book A): delta-only *understates* the loss. For
+  book A the delta is zero by construction, so delta-only VaR says "no risk" while the full revaluation
+  shows a five-figure 1-day loss.
+* Adding gamma is not enough: the vol leg matters as much as the spot leg. Only the second-order expansion
+  in both spot and variance gets within a few percent at 1 day. At 10 days moves are larger and even that
+  expansion misses by double digits for some books.
+* The worst miss of the expansion is a vol shock, not a spot shock: on 2018-02-02 -> 02-05 (SPY -4.2%,
+  VIX +116%) book A loses about $30k under full revaluation but only about $1k under delta-gamma-vega,
+  because a doubling of variance is far outside the range where a quadratic in dv is accurate.
+* The MLP full revaluation tracks the analytic one within 0.2% in VaR, about 130x faster at 1 day
+  (15-20x at 10 days, where more scenarios fall back to the analytic pricer).
+
+### Limits
+Sticky parameters (the surface is not re-calibrated after a shock), VIX as a proxy for sqrt(v0), P-measure
+scenarios with Q-measure prices, unadjusted SPY closes, and no backtest against realised option P&L
+(no historical option prices for these books). See section 6 of the report.
+
+### Code reading guide
+1. `risk/portfolio.py`: `Option`, `Book`, `Market`; `book_value` (one valuation); `greeks` (the 10 bumped
+   valuations and the finite-difference formulas); `delta_hedge_shares`.
+2. `risk/var.py`: `historical_scenarios`, `taylor_pnl` (methods 1-3 in three lines each), `full_pnl`,
+   `nn_book_values` / `full_pnl_nn`, `var_es`, `run_methods`.
+3. `scripts/run_phase5.py`: builds the three books from the real 2026-11-20 strikes and forwards and
+   writes the report.
+
 ## References
 
 * Heston, S. (1993). A closed-form solution for options with stochastic volatility. RFS 6(2).

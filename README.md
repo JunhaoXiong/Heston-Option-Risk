@@ -14,7 +14,7 @@ No number in the reports is typed by hand: every table is produced by a script i
 | 2 | Monte Carlo with Andersen (2008) QE scheme vs analytic; bias/variance study | done |
 | 3 | Calibration to a real SPY implied-volatility surface | done |
 | 4 | Neural-network surrogate pricer trained on analytic prices; honest speed/error report | done |
-| 5 | Greeks; delta-gamma vs full-revaluation VaR for an options portfolio | planned |
+| 5 | Greeks; delta / delta-gamma / delta-gamma-vega vs full-revaluation VaR and ES for option books | done |
 
 ## Phase 1 highlights
 
@@ -69,6 +69,21 @@ guide in [`docs/methodology.md`](docs/methodology.md).
   re-priced with the exact pricer, fit as well (IV RMSE 0.92 vs 0.94).
 * Lesson: finite-difference gradients through a float32 network break calibration; autograd fixes it.
 
+## Phase 5 highlights
+
+Full report: [`reports/phase5_results.md`](reports/phase5_results.md); plain-language method and code guide in
+[`docs/methodology.md`](docs/methodology.md).
+
+* Three books on the 2026-11-20 SPY surface: (A) delta-hedged short 1M ATM straddle + long 3M 10% OTM put,
+  (B) long 1M ATM call, (C) naked short 1M ATM put. Historical SPY + VIX scenarios 2006-2026, 1-day and
+  10-day, VaR 99% and ES 97.5%.
+* 1-day VaR 99% error vs full revaluation: delta-only -106% / +61% / -49% (A / B / C), delta-gamma
+  -55% / +40% / -37%, delta-gamma-vega -0.5% / +1.4% / -1.0%. Delta-only overstates risk for the long
+  option and understates it for the short ones; ignoring the vol leg is as bad as ignoring gamma.
+* At 10 days even the second-order expansion is off by 10-21% in VaR; the MLP full revaluation stays within
+  0.1% of the analytic one while running about 130x faster at 1 day (15-20x at 10 days, where more
+  scenarios leave the network's training box and fall back to the analytic pricer).
+
 ## Why this project exists (rebuild of earlier code)
 
 This repository replaces an earlier notebook of mine. Its problems, and how each phase fixes them:
@@ -92,6 +107,7 @@ src/heston_risk/
   mc/euler.py           full-truncation Euler (Phase 1 sanity check)
   calibration/          snapshot loading, implied forwards, quote filters, calibration, American-premium check
   surrogate/            dataset generation, MLP, training loop, autograd parameter Jacobian
+  risk/                 option books, finite-difference Greeks, historical scenarios, five revaluation methods, VaR/ES
   mc/simulate.py        Andersen QE + full-truncation Euler, path grid output, MC pricer with s.e. and control variate
 tests/                  pytest suite
 scripts/run_phase1.py   regenerates reports/phase1_results.md and figures
@@ -99,8 +115,10 @@ scripts/run_phase2.py   QE vs Euler bias study (about 4 minutes; --quick for a s
 scripts/run_phase3.py   SPY calibration report (about 3 minutes)
 scripts/make_phase4_data.py  surrogate training data (about 4 minutes on 4 cores)
 scripts/run_phase4.py   train + evaluate the surrogate (about 10 minutes)
+scripts/run_phase5.py   Greeks + option-book VaR/ES report (about 1 minute)
 models/heston_iv_mlp.pt trained surrogate weights
 data/spy_2026-11-20/    raw option-chain snapshot + sha256 metadata
+data/history/           daily SPY and VIX closes 2006-2026 + sha256 metadata
 docs/methodology.md     formulas, numerical choices, references
 ```
 

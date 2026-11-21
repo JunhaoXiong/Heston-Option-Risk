@@ -229,6 +229,59 @@ rho = -0.999: without a large vol-of-vol the model cannot create the observed sk
 The very high kappa and sigma are the usual Heston compromise: one variance factor must produce both a
 steep short-dated skew (needs large sigma) and a flatter long-dated term structure (needs fast reversion).
 
+## Neural-network surrogate (Phase 4)
+
+Code: `src/heston_risk/surrogate/`. Data: `scripts/make_phase4_data.py`. Training and evaluation:
+`scripts/run_phase4.py` -> `reports/phase4_results.md`, trained weights `models/heston_iv_mlp.pt`.
+
+### What the network learns, in plain terms
+The analytic pricer is a function: give it (v0, kappa, theta, sigma, rho) and an option (strike,
+maturity) and it returns a price, which we convert to an implied vol. It is exact but needs a numerical
+integral for every maturity and parameter set. The MLP learns to imitate that same function.
+
+* It is **not** a forecasting model. It never sees historical prices or dates; there is no noise in its
+  labels. Every training label is an exact Heston IV computed by the Phase 1 pricer.
+* Why an MLP suits it: the map is smooth and deterministic, with 7 inputs that interact non-linearly
+  (rho tilts the smile, sigma bends it, both mostly at short maturities; kappa controls how fast v0 is
+  forgotten as T grows). A stack of linear layers with smooth non-linear activations (SiLU) can
+  approximate such a smooth function to high accuracy, and evaluating it is just a few small
+  matrix multiplications, the same cost whatever the parameters or maturity.
+* Why predict IV rather than price: IVs are all of similar size (5% to 60%) across strikes and
+  maturities, whereas prices range from 1e-9 to 0.5 of the forward; a squared-error loss on prices
+  would ignore cheap OTM options.
+* Why only 7 inputs: with F = 1 and r = 0 the IV depends only on (params, ln(K/F), T); spot, rates and
+  dividends cancel when price is converted back to IV (a test checks this at S = 693, r = 4%).
+
+### Data design
+Scrambled Sobol sampling of (params, T) slices over the box (T log-uniform), 10 strikes per slice;
+the dataset is split into train / validation / test **by slice**, so strikes of one slice never sit on
+both sides of the split (they are near-duplicates and would make the test error look better than it is).
+The input scaling uses fixed box bounds, not statistics fitted on the data.
+
+### Training
+MSE on IV, Adam, learning rate halved after 3 epochs without validation improvement, early stopping.
+The final model stopped at the epoch cap (150) while still improving slightly, so the reported accuracy is
+not the limit of this architecture.
+
+### Lessons recorded
+* **Gradients through a float32 network.** The first surrogate calibration used finite-difference
+  Jacobians (scipy default step ~1e-8). The network's float32 output is only accurate to ~1e-7, so those
+  gradients were noise: the fit stopped early and its parameters had an IV RMSE of 1.58 vol points vs 0.94
+  for the analytic calibration, with only 1 of 10 starts agreeing. Supplying the exact network gradient
+  via autograd fixed it (10 of 10 starts agree, IV RMSE 0.92).
+* The analytic calibration minimises vega-weighted *price* errors, a first-order proxy for IV errors;
+  the surrogate fit minimises IV errors directly, which is why it can end with a marginally lower IV RMSE.
+* No-arbitrage is not built in. Butterfly checks on 156,000 grid points found 6 violations (tiny
+  wiggles in deep wings); calendar checks found none.
+
+### Code reading guide
+1. `surrogate/dataset.py`: `sample_slices` (what is sampled) and `label_slice` (how a label is made from
+   the analytic pricer).
+2. `surrogate/model.py`: `scale_inputs` (feature scaling), `IVNet` (the 4 x 128 network),
+   `Surrogate.iv_and_param_jacobian` (autograd gradient used in calibration).
+3. `surrogate/train.py`: `train_surrogate` (mini-batch loop, learning-rate schedule, early stopping).
+4. `scripts/run_phase4.py`: section 6 shows how the surrogate replaces the pricer inside calibration.
+
 ## References
 
 * Heston, S. (1993). A closed-form solution for options with stochastic volatility. RFS 6(2).

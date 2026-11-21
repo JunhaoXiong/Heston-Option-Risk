@@ -13,7 +13,7 @@ No number in the reports is typed by hand: every table is produced by a script i
 | 1 | Analytic Heston pricer (characteristic function, Lewis formula), validation | done |
 | 2 | Monte Carlo with Andersen (2008) QE scheme vs analytic; bias/variance study | done |
 | 3 | Calibration to a real SPY implied-volatility surface | done |
-| 4 | Neural-network surrogate pricer trained on analytic prices; honest speed/error report | planned |
+| 4 | Neural-network surrogate pricer trained on analytic prices; honest speed/error report | done |
 | 5 | Greeks; delta-gamma vs full-revaluation VaR for an options portfolio | planned |
 
 ## Phase 1 highlights
@@ -55,13 +55,27 @@ Full report: [`reports/phase3_results.md`](reports/phase3_results.md). Data snap
 * Early exercise matters for long-dated puts (median 0.5 vol points beyond one year); a de-Americanised
   re-fit moves the parameters only slightly.
 
+## Phase 4 highlights
+
+Full report: [`reports/phase4_results.md`](reports/phase4_results.md); method in plain terms and a code reading
+guide in [`docs/methodology.md`](docs/methodology.md).
+
+* MLP (7 inputs -> 4 x 128 SiLU -> IV), 50,689 weights, trained on 1.05M exact Heston IVs (split by
+  parameter slice), 7 minutes on 4 CPU cores.
+* Test IV error: RMSE 0.026 vol points, 99th percentile 0.09, max 0.70 (the SPY bid-ask is ~0.31).
+* Speed-up over the analytic pricer: 6x for one 50-strike slice, 25x for a whole surface, ~860x when every
+  option has its own parameters/maturity.
+* Re-running the SPY calibration with the surrogate: 0.7 s instead of 31 s for 10 starts, and the parameters,
+  re-priced with the exact pricer, fit as well (IV RMSE 0.92 vs 0.94).
+* Lesson: finite-difference gradients through a float32 network break calibration; autograd fixes it.
+
 ## Why this project exists (rebuild of earlier code)
 
 This repository replaces an earlier notebook of mine. Its problems, and how each phase fixes them:
 
 | Earlier code | Problem | Fix here |
 |---|---|---|
-| Part 1 NN | Training labels were random grid points; no Heston price was ever computed | Labels are analytic Heston prices validated to ~1e-10 (Phases 1 and 4) |
+| Part 1 NN | Training labels were random grid points; no Heston price was ever computed | Labels are exact Heston IVs from the validated pricer; test split by slice; error, speed and arbitrage reported (Phase 4) |
 | Part 2 MC | Each training sample used **one** simulated path as its "price" (pure noise, no averaging) | Proper MC estimator with standard errors and a bias study (Phase 2) |
 | Part 2 MC | Paths simulated to T = 1 but discounted with a random T_sample | Consistent maturity throughout; tested |
 | Part 2 MC | Euler with `max(v, 0)` and no check against an exact price | Andersen QE vs analytic, convergence tables (Phase 2) |
@@ -77,11 +91,15 @@ src/heston_risk/
   heston/pricer.py      Lewis + composite Gauss-Legendre; quad and Gil-Pelaez references
   mc/euler.py           full-truncation Euler (Phase 1 sanity check)
   calibration/          snapshot loading, implied forwards, quote filters, calibration, American-premium check
+  surrogate/            dataset generation, MLP, training loop, autograd parameter Jacobian
   mc/simulate.py        Andersen QE + full-truncation Euler, path grid output, MC pricer with s.e. and control variate
 tests/                  pytest suite
 scripts/run_phase1.py   regenerates reports/phase1_results.md and figures
 scripts/run_phase2.py   QE vs Euler bias study (about 4 minutes; --quick for a smoke test)
 scripts/run_phase3.py   SPY calibration report (about 3 minutes)
+scripts/make_phase4_data.py  surrogate training data (about 4 minutes on 4 cores)
+scripts/run_phase4.py   train + evaluate the surrogate (about 10 minutes)
+models/heston_iv_mlp.pt trained surrogate weights
 data/spy_2026-11-20/    raw option-chain snapshot + sha256 metadata
 docs/methodology.md     formulas, numerical choices, references
 ```
@@ -89,7 +107,7 @@ docs/methodology.md     formulas, numerical choices, references
 ## Usage
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,nn]"
 pytest -q
 python scripts/run_phase1.py
 ```
